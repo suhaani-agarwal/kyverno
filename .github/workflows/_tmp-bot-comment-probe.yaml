@@ -1,0 +1,34 @@
+# Temporary diagnostic workflow — posts an inline review comment as github-actions[bot] on a given PR, to
+# verify pr-readiness-check.yaml's author-only gate correctly skips non-author comments. Deleted after use.
+name: "_tmp bot comment probe"
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+      path:
+        required: true
+      line:
+        required: true
+
+jobs:
+  comment:
+    runs-on: ubuntu-slim
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Post inline comment as github-actions[bot]
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ inputs.pr_number }}/commits" --jq '.[-1].sha')
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ inputs.pr_number }}/comments" -X POST \
+            -f body="bot comment, should NOT trigger pr-readiness-check" \
+            -f commit_id="$sha" \
+            -f path="${{ inputs.path }}" \
+            -F line="${{ inputs.line }}" \
+            -f side="RIGHT"
