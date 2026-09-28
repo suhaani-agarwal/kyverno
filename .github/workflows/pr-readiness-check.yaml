@@ -1,13 +1,12 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 #
-# Event-driven: for every open, non-draft, non-Dependabot PR, checks DCO, CI, conflicts, and unresolved review
-# threads. Clean -> `ready-for-review`; not -> `needs-author-action` + a comment. Reacts to the PR events that
-# actually change these (a push, a review, an author reply), plus an hourly sweep of every open PR as a safety
-# net for everything else — CI settling has no clean per-PR event, and merge-conflicts is only ever toggled by
-# pr-labelling.yaml via GITHUB_TOKEN, which never dispatches new workflow runs.
+# Checks DCO, CI, conflicts, and unresolved review threads for every open, non-draft, non-Dependabot PR.
+# Clean -> `ready-for-review`; not -> `needs-author-action` + a comment.
 #
-# `pull_request_target` only ever reads PR metadata via the API here — the checkout below never takes a `ref:`,
-# so it only ever checks out this trusted default branch, never the PR's own code.
+# Triggers: a push, or a PR reopened/marked ready — each checks just that one PR. Plus an hourly sweep of every
+# open PR, which also stamps `milestone-pr` on PRs closing an open "Kyverno Release ..." issue. Reviews and
+# review comments aren't triggers: on a fork PR they only ever get a read-only GITHUB_TOKEN, so they couldn't
+# write labels anyway — the hourly sweep picks those up instead.
 #
 # Checks live in .github/pr-readiness-checks.yml, not here.
 
@@ -16,7 +15,7 @@ name: "PR readiness check"
 permissions: {}
 
 concurrency:
-  group: pr-readiness-${{ github.event.pull_request.number || 'sweep' }}
+  group: pr-readiness
   cancel-in-progress: false
 
 on:
@@ -28,21 +27,9 @@ on:
       - synchronize
       - reopened
       - ready_for_review
-  pull_request_review:
-    types:
-      - submitted
-      - dismissed
-  pull_request_review_comment:
-    types:
-      - created
 
 jobs:
   check:
-    # A review comment only matters here when the PR's own author posted it — a reviewer or bot leaving one
-    # (or several, in one batch) never should re-trigger this.
-    if: >
-      github.event_name != 'pull_request_review_comment' ||
-      github.event.comment.user.login == github.event.pull_request.user.login
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -69,12 +56,19 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
 
           case "$EVENT_NAME" in
-            pull_request_target|pull_request_review|pull_request_review_comment)
-              echo "[$PR_NUMBER]" > qualifying-numbers.json
+            pull_request_target)
+              # Same eligibility as the sweep: non-draft, not Dependabot's (dependabot-merge-triage.yaml owns those).
+              if [[ "$IS_DRAFT" == "true" || "$PR_AUTHOR" == "dependabot[bot]" ]]; then
+                echo '[]' > qualifying-numbers.json
+              else
+                echo "[$PR_NUMBER]" > qualifying-numbers.json
+              fi
               ;;
             schedule|workflow_dispatch)
               echo 'sweep' > mode.txt
@@ -167,7 +161,9 @@ jobs:
           for number in $(jq -r '.[]' milestone-numbers.json); do
             current_labels=$(gh pr view "$number" --repo "${GITHUB_REPOSITORY}" --json labels --jq '[.labels[].name]')
             has_milestone_label=$(jq 'any(. == "milestone-pr")' <<< "$current_labels")
-            [[ "$has_milestone_label" == "false" ]] && gh pr edit "$number" --repo "${GITHUB_REPOSITORY}" --add-label "milestone-pr"
+            if [[ "$has_milestone_label" == "false" ]]; then
+              gh pr edit "$number" --repo "${GITHUB_REPOSITORY}" --add-label "milestone-pr"
+            fi
           done
 
       - name: Fetch full readiness data and check each qualifying PR (per-PR pass)
