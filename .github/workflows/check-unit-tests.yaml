@@ -61,6 +61,10 @@ jobs:
     name: Upload coverage to Codecov
     needs:
     - tests
+    # FORK-ONLY TEST CHANGE — never push this to kyverno/kyverno. Codecov's OIDC trust is only configured for
+    # the real repo, so this job fails outright on any fork. Skipped here purely so fork testing can get a
+    # genuinely green "Unit tests" check.
+    if: github.repository == 'kyverno/kyverno'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
