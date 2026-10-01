@@ -44,7 +44,7 @@ jobs:
       github.event_name == 'pull_request_target' &&
       github.actor != 'dependabot[bot]' &&
       (github.event.action == 'opened' || github.event.changes.body != null)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       issues: write
       pull-requests: write
@@ -107,7 +107,7 @@ jobs:
     if: |
       github.event_name == 'issues' &&
       startsWith(github.event.issue.milestone.title, 'Kyverno Release ')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       issues: write
       pull-requests: write
