@@ -20,8 +20,10 @@ name: PR milestone
 
 permissions: {}
 
+# Per PR/issue, not global: a group holds one running and one pending run and cancels older pending ones,
+# so a global group would drop runs when several PRs open at once. (PR and issue numbers share one space.)
 concurrency:
-  group: pr-milestone
+  group: pr-milestone-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 
 on:
