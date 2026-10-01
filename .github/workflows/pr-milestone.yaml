@@ -124,8 +124,11 @@ jobs:
           owner="${REPO%/*}"
           name="${REPO#*/}"
 
-          # The issue's milestone before this change, replayed from its milestone timeline (the last event is
-          # the one that triggered us, so drop it). The webhook payload only carries the new milestone.
+          # The issue's milestone before this change, replayed from its milestone timeline; the webhook payload
+          # only carries the new one. The last event is the one that triggered us, so drop it. GitHub records a
+          # direct change (R1 -> R2) as a `demilestoned` R1 + `milestoned` R2 pair in the same second, whereas
+          # clearing and later setting leaves a gap — so a `demilestoned` right before the new event is the
+          # previous milestone, and an earlier one means the issue had none.
           history_query='
             query($owner: String!, $name: String!, $number: Int!) {
               repository(owner: $owner, name: $name) {
@@ -133,8 +136,8 @@ jobs:
                   timelineItems(last: 100, itemTypes: [MILESTONED_EVENT, DEMILESTONED_EVENT]) {
                     nodes {
                       __typename
-                      ... on MilestonedEvent { milestoneTitle }
-                      ... on DemilestonedEvent { milestoneTitle }
+                      ... on MilestonedEvent { createdAt milestoneTitle }
+                      ... on DemilestonedEvent { createdAt milestoneTitle }
                     }
                   }
                 }
@@ -144,9 +147,15 @@ jobs:
               -F number="$ISSUE_NUMBER" \
             | jq -r --arg new "$NEW_TITLE" '
                 .data.repository.issue.timelineItems.nodes as $e
-                | (if ($e | length) > 0 and ($e | last | .__typename == "MilestonedEvent" and .milestoneTitle == $new)
-                   then $e[:-1] else $e end)
-                | reduce .[] as $x (""; if $x.__typename == "MilestonedEvent" then $x.milestoneTitle else "" end)')
+                | ($e | length > 0 and (last | .__typename == "MilestonedEvent" and .milestoneTitle == $new)) as $ours
+                | (if $ours then $e[:-1] else $e end) as $before
+                | (if $ours then ($e | last | .createdAt | fromdateiso8601) else null end) as $at
+                | if ($before | length) == 0 then ""
+                  else ($before | last) as $l
+                    | if $l.__typename == "DemilestonedEvent"
+                      then (if $at != null and ($at - ($l.createdAt | fromdateiso8601)) <= 2 then $l.milestoneTitle else "" end)
+                      else $l.milestoneTitle end
+                  end')
           echo "Issue #${ISSUE_NUMBER}: '${previous}' -> '${NEW_TITLE}'"
 
           # Candidate PRs: those that cross-reference or are linked to the issue. Each is verified below
